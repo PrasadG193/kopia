@@ -95,6 +95,40 @@ func findInUseContentIDs(ctx context.Context, rep *repo.Repository, ids []manife
 	return nil
 }
 
+func walkSnapshots(ctx context.Context, rep *repo.Repository, ids []manifest.ID, callback func(entry fs.Entry) error) error {
+	roots, err := rootsForSnapshotIDs(ctx, rep, ids)
+	if err != nil {
+		return errors.Wrap(err, "unable to load manifest IDs")
+	}
+
+	w := snapshotfs.NewTreeWalker()
+	w.EntryID = func(e fs.Entry) interface{} { return oidOf(e) }
+	w.RootEntries = roots
+	w.ObjectCallback = callback
+
+	return w.Run(ctx)
+}
+
+func rootsForSnapshotIDs(ctx context.Context, rep *repo.Repository, ids []manifest.ID) (fs.Entries, error) {
+	manifests, err := snapshot.LoadSnapshots(ctx, rep, ids)
+	if err != nil {
+		return nil, errors.Wrap(err, "unable to load manifest IDs")
+	}
+
+	var roots fs.Entries
+
+	for _, m := range manifests {
+		root, err := snapshotfs.SnapshotRoot(rep, m)
+		if err != nil {
+			return nil, errors.Wrapf(err, "unable to get root for snapshot %v", m.ID)
+		}
+
+		roots = append(roots, root)
+	}
+
+	return roots, nil
+}
+
 // Run performs garbage collection on all the snapshots in the repository.
 func Run(ctx context.Context, rep *repo.Repository, minContentAge time.Duration, gcDelete bool) (*Stats, error) {
 	snapIDs, err := snapshot.ListSnapshotManifests(ctx, rep, nil)
