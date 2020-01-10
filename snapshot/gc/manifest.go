@@ -77,7 +77,7 @@ func markContentAndCreateManifest(ctx context.Context, rep *repo.Repository, sna
 		return err
 	}
 
-	return nil
+	return rep.Manifests.Flush(ctx)
 }
 
 func writeMarkDetails(ctx context.Context, rep *repo.Repository, snaps []manifest.ID, toDelete []content.ID) (content.ID, error) {
