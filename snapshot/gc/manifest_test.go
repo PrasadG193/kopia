@@ -2,9 +2,9 @@ package gc
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
-	"io"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -27,20 +27,13 @@ func TestMarkContentsDeleted(t *testing.T) {
 	const contentCount = 10
 
 	ctx := context.Background()
-	cids := make([]content.ID, 0, contentCount)
 	check := require.New(t)
 	th := createAndOpenRepo(t)
 
 	defer th.Close(t)
 
 	// setup: create contents
-	for i := 0; i < contentCount; i++ {
-		b := seededRandomData(t, i, 10)
-		id, err := th.repo.Content.WriteContent(ctx, b, "")
-		check.NoError(err)
-
-		cids = append(cids, id)
-	}
+	cids := writeContents(ctx, t, th.repo.Content, contentCount)
 
 	check.NoError(th.repo.Flush(ctx))
 
@@ -92,18 +85,10 @@ func TestMarkContentsDeleted(t *testing.T) {
 	check.Equal(toDelete, markDetails.MarkedContent, "MarkedContent must have the ids of the removed contents")
 
 	// verify content not in `toDelete` was not deleted
-	for _, id := range cids[5:] {
-		info, err := th.repo.Content.ContentInfo(ctx, id)
-		check.NoError(err)
-		check.False(info.Deleted, info, "content NOT in 'toDelete' was deleted")
-	}
+	verifyContentDeletedState(ctx, t, th.repo.Content, cids[5:], false)
 
 	// verify content in 'toDelete' was marked as deleted
-	for _, id := range toDelete {
-		info, err := th.repo.Content.ContentInfo(ctx, id)
-		check.NoError(err)
-		check.True(info.Deleted, info, "content in 'toDelete' was NOT deleted")
-	}
+	verifyContentDeletedState(ctx, t, th.repo.Content, toDelete, true)
 }
 
 func TestSortContentIDs(t *testing.T) {
@@ -181,19 +166,6 @@ func (r *testRepo) Close(t *testing.T) {
 	}
 }
 
-func seededRandomData(t *testing.T, seed, length int) []byte {
-	t.Helper()
-
-	b := make([]byte, length)
-	rnd := rand.New(rand.NewSource(int64(seed)))
-	rnd.Read(b)
-	got, err := io.ReadFull(rnd, b)
-	require.NoError(t, err)
-	require.Equal(t, length, got)
-
-	return b
-}
-
 func nManifestIDs(t *testing.T, n uint) []manifest.ID {
 	ids := make([]manifest.ID, n)
 
@@ -213,4 +185,33 @@ func makeRandomHexString(t *testing.T, length int) string {
 	require.NoError(t, err)
 
 	return hex.EncodeToString(b)
+}
+
+func verifyContentDeletedState(ctx context.Context, t *testing.T, cm *content.Manager, cids []content.ID, wantDeleted bool) {
+	t.Helper()
+
+	for _, id := range cids {
+		info, err := cm.ContentInfo(ctx, id)
+		assert.NoError(t, err)
+		assert.Equal(t, wantDeleted, info.Deleted, "content deleted state does not match")
+	}
+}
+
+func writeContents(ctx context.Context, t *testing.T, cm *content.Manager, n int) []content.ID {
+	t.Helper()
+
+	b := make([]byte, 8)
+	ids := make([]content.ID, 0, n)
+
+	for i := rand.Uint64(); n > 0; n-- {
+		binary.BigEndian.PutUint64(b, i)
+		i++
+
+		id, err := cm.WriteContent(ctx, b, "")
+		assert.NoError(t, err, "Failed to write content")
+
+		ids = append(ids, id)
+	}
+
+	return ids
 }
