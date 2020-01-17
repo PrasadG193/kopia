@@ -140,6 +140,70 @@ func (bm *Manager) deletePreexistingContent(ci Info) {
 
 	pp := bm.getOrCreatePendingPackInfoLocked(packPrefixForContentID(ci.ID))
 	ci.Deleted = true
+	ci.operation = deleting
+	ci.TimestampSeconds = bm.timeNow().Unix()
+	pp.currentPackItems[ci.ID] = ci
+}
+
+// UndeleteContent removes the 'deleted' mark from the given contentID if there
+// exists an (index) entry for the content. If the content is not marked as
+// deleted, this operation is a no-op. When a content (index entry) cannot be
+// found, an error is returned.
+func (bm *Manager) UndeleteContent(contentID ID) error {
+	bm.lock()
+	defer bm.unlock()
+
+	log.Debugf("UndeleteContent(%q)", contentID)
+
+	// remove from pending packs if the content is marked as deleted
+	for _, pp := range bm.pendingPacks {
+		if bi, ok := pp.currentPackItems[contentID]; ok {
+			if bi.Deleted {
+				delete(pp.currentPackItems, contentID)
+			}
+
+			return nil
+		}
+	}
+
+	// remove from packs that are being written, since they will be committed to index soon
+	for _, pp := range bm.writingPacks {
+		if bi, ok := pp.currentPackItems[contentID]; ok {
+			if bi.Deleted {
+				bm.undeletePreexistingContent(bi)
+			}
+
+			return nil
+		}
+	}
+
+	// if found in committed index, add another entry without the delete marker
+	if bi, ok := bm.packIndexBuilder[contentID]; ok {
+		bm.undeletePreexistingContent(*bi)
+		return nil
+	}
+
+	// see if the block existed before
+	bi, err := bm.committedContents.getContent(contentID)
+	if err != nil {
+		return err
+	}
+
+	bm.undeletePreexistingContent(bi)
+
+	return nil
+}
+
+// Intentionally passing bi by value.
+// nolint:gocritic
+func (bm *Manager) undeletePreexistingContent(ci Info) {
+	if !ci.Deleted {
+		return
+	}
+
+	pp := bm.getOrCreatePendingPackInfoLocked(packPrefixForContentID(ci.ID))
+	ci.Deleted = false
+	ci.operation = undeleting
 	ci.TimestampSeconds = bm.timeNow().Unix()
 	pp.currentPackItems[ci.ID] = ci
 }
@@ -244,7 +308,7 @@ func (bm *Manager) verifyCurrentPackItemsLocked() {
 	for _, pp := range bm.pendingPacks {
 		for k, cpi := range pp.currentPackItems {
 			bm.assertInvariant(cpi.ID == k, "content ID entry has invalid key: %v %v", cpi.ID, k)
-			bm.assertInvariant(cpi.Deleted || cpi.PackBlobID == "", "content ID entry has unexpected pack content ID %v: %v", cpi.ID, cpi.PackBlobID)
+			bm.assertInvariant(cpi.Deleted || cpi.operation == undeleting || cpi.PackBlobID == "", "content ID entry has unexpected pack content ID %v: %v", cpi.ID, cpi.PackBlobID)
 			bm.assertInvariant(cpi.TimestampSeconds != 0, "content has no timestamp: %v", cpi.ID)
 		}
 	}
