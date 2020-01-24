@@ -28,9 +28,6 @@ type MarkManifest struct {
 // MarkDetails contains metadata about a GC mark phase, which is later used
 // by the GC delete phase
 type MarkDetails struct {
-	// Deleted snapshots encountered by a GC run. This is not strictly needed
-	// in the GC delete phase. Currently used for debugging, may be removed.
-	DeletedSnapshots []manifest.ID `json:"deletedSnapshots,omitempty"`
 	// Snapshots that were visible to a GC run.
 	Snapshots []manifest.ID `json:"liveSnapshots,omitempty"`
 	// Set of contents marked for deletion by the GC mark phase.
