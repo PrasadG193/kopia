@@ -89,8 +89,11 @@ func checkRepairSnaps(ctx context.Context, rep *repo.Repository, snaps manifestI
 			}
 
 			if info.Deleted {
-				// TODO: undelete content
-				log.Info("found deleted content, undeleting: ", cid)
+				if err := rep.Content.UndeleteContent(cid); err != nil {
+					return errors.Wrapf(err, "could not undelete content %v", cid)
+				}
+
+				log.Info("un-deleted content: ", cid)
 			}
 		}
 
