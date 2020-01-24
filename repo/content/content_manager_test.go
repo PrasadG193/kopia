@@ -495,23 +495,23 @@ func TestUndeleteContent(t *testing.T) {
 	// - content 5 is not flushed and not deleted
 
 	if err := bm.UndeleteContent(content1); err != nil {
-		t.Fatal("unable to undeleted content 1: ", content1, err)
+		t.Fatal("unable to undelete content 1: ", content1, err)
 	}
 
 	if err := bm.UndeleteContent(content2); err != nil {
-		t.Fatal("unable to undeleted content 2: ", content2, err)
+		t.Fatal("unable to undelete content 2: ", content2, err)
 	}
 
 	if err := bm.UndeleteContent(content3); err != nil {
-		t.Fatal("unable to undeleted content 3: ", content3, err)
+		t.Fatal("unable to undelete content 3: ", content3, err)
 	}
 
 	if err := bm.UndeleteContent(content4); err == nil {
-		t.Fatal("was able to undeleted content 4: ", content4)
+		t.Fatal("was able to undelete content 4: ", content4)
 	}
 
 	if err := bm.UndeleteContent(content5); err != nil {
-		t.Fatal("unable to undeleted content 5: ", content5, err)
+		t.Fatal("unable to undelete content 5: ", content5, err)
 	}
 
 	// verify content is not marked as deleted
