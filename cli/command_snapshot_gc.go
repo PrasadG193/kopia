@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 
+	"github.com/kopia/kopia/internal/units"
 	"github.com/kopia/kopia/repo"
 	"github.com/kopia/kopia/snapshot/gc"
 )
@@ -16,14 +17,19 @@ var (
 func runSnapshotGCCommand(ctx context.Context, rep *repo.Repository) error {
 	stats, err := gc.Run(ctx, rep, *snapshotGCMinContentAge, *snapshotGCDelete)
 
-	log.Info("GC unused contents: ", stats.Unused.String())
-	log.Info("GC unused contents that are too recent to delete: ", stats.TooRecent.String())
-	log.Info("GC in-use contents: ", stats.InUse.String())
-	log.Info("GC in-use system-contents: ", stats.System.String())
+	logContentStat("GC unused contents", &stats.Unused)
+	logContentStat("GC unused contents that are too recent to delete", &stats.TooRecent)
+	logContentStat("GC in-use contents", &stats.InUse)
+	logContentStat("GC in-use system-contents", &stats.System)
 	log.Info("GC find in-use content duration: ", stats.FindInUseDuration)
 	log.Info("GC mark-delete content duration: ", stats.FindUnusedDuration)
 
 	return err
+}
+
+func logContentStat(contentState string, s *gc.CountAndSum) {
+	count, sum := s.Approximate()
+	log.Infof("%s: %d (%v bytes)", contentState, count, units.BytesStringBase2(sum))
 }
 
 func init() {

@@ -3,7 +3,6 @@ package gc
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,33 +22,32 @@ import (
 
 var log = kopialogging.Logger("kopia/snapshot/gc")
 
-// CountAndBytes keeps track of a count and associated total size sum (bytes)
-type CountAndBytes struct {
+// CountAndSum keeps track of a count and associated total size sum (bytes)
+type CountAndSum struct {
 	count uint32
-	bytes int64
+	sum   int64
 }
 
 // Stats contains statistics about a GC run
 type Stats struct {
-	Unused             CountAndBytes
-	InUse              CountAndBytes
-	System             CountAndBytes
-	TooRecent          CountAndBytes
+	Unused             CountAndSum
+	InUse              CountAndSum
+	System             CountAndSum
+	TooRecent          CountAndSum
 	FindInUseDuration  time.Duration
 	FindUnusedDuration time.Duration
 }
 
 // Add adds size to s and returns approximate values for the current count
 // and total bytes
-func (s *CountAndBytes) Add(size uint32) (count uint32, totalBytes int64) {
-	return atomic.AddUint32(&s.count, 1), atomic.AddInt64(&s.bytes, int64(size))
+func (s *CountAndSum) Add(size uint32) (count uint32, sum int64) {
+	return atomic.AddUint32(&s.count, 1), atomic.AddInt64(&s.sum, int64(size))
 }
 
-func (s *CountAndBytes) String() string {
-	count := atomic.LoadUint32(&s.count)
-	bytes := atomic.LoadInt64(&s.bytes)
-
-	return fmt.Sprintf("%d (%v bytes)", count, units.BytesStringBase2(bytes))
+// Approximate returns an approximation of the current count and sum values.
+// It is approximate because retrieving both values is not an atomic operation.
+func (s *CountAndSum) Approximate() (count uint32, sum int64) {
+	return atomic.LoadUint32(&s.count), atomic.LoadInt64(&s.sum)
 }
 
 func oidOf(entry fs.Entry) object.ID {
@@ -105,10 +103,10 @@ func findInUseContentIDs(ctx context.Context, rep *repo.Repository, used *sync.M
 
 // Run performs garbage collection on all the snapshots in the repository.
 // nolint:gocognit
-func Run(ctx context.Context, rep *repo.Repository, minContentAge time.Duration, gcDelete bool) (Stats, error) {
+func Run(ctx context.Context, rep *repo.Repository, minContentAge time.Duration, gcDelete bool) (*Stats, error) {
 	start := time.Now()
 
-	var st Stats
+	st := &Stats{}
 
 	var used sync.Map
 
