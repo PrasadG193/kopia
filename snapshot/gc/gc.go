@@ -165,7 +165,7 @@ func Run(ctx context.Context, rep *repo.Repository, minContentAge time.Duration,
 	st.FindUnusedDuration = time.Since(finishFindUsed)
 
 	if st.Unused.count > 0 && !gcDelete {
-		return st, errors.Errorf("Not deleting because '--delete' flag was not set.")
+		return st, errors.Errorf("not deleting because '--delete' flag was not set")
 	}
 
 	return st, nil
