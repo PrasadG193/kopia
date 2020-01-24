@@ -441,6 +441,123 @@ func TestDeleteContent(t *testing.T) {
 	verifyContentNotFound(ctx, t, bm, content2)
 }
 
+// nolint:gocyclo
+func TestUndeleteContent(t *testing.T) {
+	ctx := context.Background()
+	data := blobtesting.DataMap{}
+	keyTime := map[blob.ID]time.Time{}
+	bm := newTestContentManager(data, keyTime, nil)
+
+	content1 := writeContentAndVerify(ctx, t, bm, seededRandomData(20, 10))
+	content2 := writeContentAndVerify(ctx, t, bm, seededRandomData(21, 10))
+	content3 := writeContentAndVerify(ctx, t, bm, seededRandomData(31, 10))
+
+	if err := bm.Flush(ctx); err != nil {
+		t.Fatalf("error flushing: %v", err)
+	}
+
+	dumpContents(t, bm, "after first flush")
+
+	log.Info("deleting content 1: ", content1)
+
+	if err := bm.DeleteContent(content1); err != nil {
+		t.Fatalf("unable to delete content %v: %v", content1, err)
+	}
+
+	if err := bm.Flush(ctx); err != nil {
+		t.Fatalf("error flushing: %v", err)
+	}
+
+	log.Info("deleting content 2: ", content2)
+
+	if err := bm.DeleteContent(content2); err != nil {
+		t.Fatalf("unable to delete content %v: %v", content2, err)
+	}
+
+	content4 := writeContentAndVerify(ctx, t, bm, seededRandomData(41, 10))
+	content5 := writeContentAndVerify(ctx, t, bm, seededRandomData(51, 10))
+
+	log.Info("deleting content 4: ", content4)
+
+	if err := bm.DeleteContent(content4); err != nil {
+		t.Fatalf("unable to delete content %v: %v", content4, err)
+	}
+
+	verifyContentNotFound(ctx, t, bm, content1)
+	verifyContentNotFound(ctx, t, bm, content2)
+	verifyContentNotFound(ctx, t, bm, content4)
+
+	// At this point:
+	// - content 1 is flushed, deleted index entry has been flushed
+	// - content 2 is flushed, deleted index entry has not been flushed
+	// - content 3 is flushed, not deleted
+	// - content 4 is not flushed and deleted, it cannot be undeleted
+	// - content 5 is not flushed and not deleted
+
+	if err := bm.UndeleteContent(content1); err != nil {
+		t.Fatal("unable to undeleted content 1: ", content1, err)
+	}
+
+	if err := bm.UndeleteContent(content2); err != nil {
+		t.Fatal("unable to undeleted content 2: ", content2, err)
+	}
+
+	if err := bm.UndeleteContent(content3); err != nil {
+		t.Fatal("unable to undeleted content 3: ", content3, err)
+	}
+
+	if err := bm.UndeleteContent(content4); err == nil {
+		t.Fatal("was able to undeleted content 4: ", content4)
+	}
+
+	if err := bm.UndeleteContent(content5); err != nil {
+		t.Fatal("unable to undeleted content 5: ", content5, err)
+	}
+
+	// verify content is not marked as deleted
+	for _, id := range []ID{} {
+		ci, err := bm.ContentInfo(ctx, id)
+		if err != nil {
+			t.Fatalf("unable to get content info for %v: %v", id, err)
+		}
+
+		if got, want := ci.Deleted, false; got != want {
+			t.Fatalf("content %v was not undeleted: %v", id, ci)
+		}
+	}
+
+	log.Info("flushing ...")
+	bm.Flush(ctx)
+	log.Info("... flushed")
+
+	// verify content is not marked as deleted
+	for _, id := range []ID{} {
+		ci, err := bm.ContentInfo(ctx, id)
+		if err != nil {
+			t.Fatalf("unable to get content info for %v: %v", id, err)
+		}
+
+		if got, want := ci.Deleted, false; got != want {
+			t.Fatalf("content %v was not undeleted: %v", id, ci)
+		}
+	}
+
+	bm = newTestContentManager(data, keyTime, nil)
+	verifyContentNotFound(ctx, t, bm, content4)
+
+	// verify content is not marked as deleted
+	for _, id := range []ID{} {
+		ci, err := bm.ContentInfo(ctx, id)
+		if err != nil {
+			t.Fatalf("unable to get content info for %v: %v", id, err)
+		}
+
+		if got, want := ci.Deleted, false; got != want {
+			t.Fatalf("content %v was not undeleted: %v", id, ci)
+		}
+	}
+}
+
 func TestParallelWrites(t *testing.T) {
 	t.Parallel()
 
