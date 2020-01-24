@@ -2,12 +2,22 @@ package gc
 
 import (
 	"context"
+	"encoding/binary"
+	"encoding/hex"
+	"io/ioutil"
+	"math/rand"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"github.com/kopia/kopia/repo"
+	"github.com/kopia/kopia/repo/blob/filesystem"
 	"github.com/kopia/kopia/repo/content"
+	"github.com/kopia/kopia/repo/manifest"
 )
 
 func Test_deleteUnused(t *testing.T) {
@@ -133,4 +143,119 @@ func Test_deleteUnused(t *testing.T) {
 			check.Equal(len(gcMans), foundGCContentCount, "GC details content count does not match number of GC mark manifests")
 		})
 	}
+}
+
+type testRepo struct {
+	stateDir string
+	repo     *repo.Repository
+}
+
+func createAndOpenRepo(t *testing.T) testRepo {
+	const masterPassword = "foo"
+
+	t.Helper()
+
+	ctx := context.Background()
+	check := require.New(t)
+
+	stateDir, err := ioutil.TempDir("", "manifest-test")
+	check.NoError(err, "cannot create temp directory")
+	t.Log("repo dir:", stateDir)
+
+	repoDir := filepath.Join(stateDir, "repo")
+	check.NoError(os.MkdirAll(repoDir, 0700), "cannot create repository directory")
+
+	storage, err := filesystem.New(context.Background(), &filesystem.Options{
+		Path: repoDir,
+	})
+	check.NoError(err, "cannot create storage directory")
+
+	err = repo.Initialize(ctx, storage, &repo.NewRepositoryOptions{}, masterPassword)
+	check.NoError(err, "cannot create repository")
+
+	configFile := filepath.Join(stateDir, configFileName)
+	connOpts := repo.ConnectOptions{
+		CachingOptions: content.CachingOptions{
+			CacheDirectory: filepath.Join(stateDir, "cache"),
+		},
+	}
+	err = repo.Connect(ctx, configFile, storage, masterPassword, connOpts)
+
+	check.NoError(err, "unable to connect to repository")
+
+	rep, err := repo.Open(ctx, configFile, masterPassword, &repo.Options{})
+	check.NoError(err, "unable to open repository")
+
+	return testRepo{
+		stateDir: stateDir,
+		repo:     rep,
+	}
+}
+
+func (r *testRepo) Close(t *testing.T) {
+	t.Helper()
+
+	ctx := context.Background()
+
+	if r.repo != nil {
+		assert.NoError(t, r.repo.Close(ctx), "unable to close repository")
+	}
+
+	if r.stateDir != "" {
+		configFile := filepath.Join(r.stateDir, configFileName)
+		err := repo.Disconnect(configFile)
+
+		require.NoError(t, err, "failed to disconnect repo with config file: ", configFile)
+		assert.NoError(t, os.RemoveAll(r.stateDir), "unable to cleanup test state directory")
+	}
+}
+
+func nManifestIDs(t *testing.T, n uint) []manifest.ID {
+	ids := make([]manifest.ID, n)
+
+	for i := range ids {
+		ids[i] = manifest.ID(makeRandomHexString(t, 32))
+	}
+
+	return ids
+}
+
+func makeRandomHexString(t *testing.T, length int) string {
+	t.Helper()
+
+	b := make([]byte, (length-1)/2+1)
+	_, err := rand.Read(b) // nolint:gosec
+
+	require.NoError(t, err)
+
+	return hex.EncodeToString(b)
+}
+
+func verifyContentDeletedState(ctx context.Context, t *testing.T, cm *content.Manager, cids []content.ID, wantDeleted bool) {
+	t.Helper()
+
+	for _, id := range cids {
+		info, err := cm.ContentInfo(ctx, id)
+		assert.NoError(t, err)
+		assert.Equal(t, wantDeleted, info.Deleted, "content deleted state does not match")
+	}
+}
+
+func writeContents(ctx context.Context, t *testing.T, cm *content.Manager, n int) []content.ID {
+	t.Helper()
+
+	b := make([]byte, 8)
+	ids := make([]content.ID, 0, n)
+
+	for i := rand.Uint64(); n > 0; n-- {
+		binary.BigEndian.PutUint64(b, i)
+		i++
+
+		id, err := cm.WriteContent(ctx, b, "")
+		assert.NoError(t, err, "Failed to write content")
+
+		ids = append(ids, id)
+	}
+
+	return ids
 }
