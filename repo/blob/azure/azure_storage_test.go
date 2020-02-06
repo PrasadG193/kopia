@@ -25,6 +25,7 @@ func getEnvOrSkip(t *testing.T, name string) string {
 	if !ok {
 		t.Skip(fmt.Sprintf("%s not provided", name))
 	}
+
 	return value
 }
 

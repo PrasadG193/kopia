@@ -38,6 +38,7 @@ func (az *azStorage) GetBlob(ctx context.Context, b blob.ID, offset, length int6
 	if offset < 0 {
 		return nil, errors.Errorf("invalid offset")
 	}
+
 	attempt := func() (interface{}, error) {
 		reader, err := az.bucket.NewRangeReader(ctx, az.getObjectNameString(b), offset, length, nil)
 		if err != nil {
@@ -63,6 +64,7 @@ func (az *azStorage) GetBlob(ctx context.Context, b blob.ID, offset, length int6
 	if len(fetched) != int(length) && length >= 0 {
 		return nil, errors.Errorf("invalid offset/length")
 	}
+
 	return fetched, nil
 }
 
@@ -110,6 +112,8 @@ func translateError(err error) error {
 
 func (az *azStorage) PutBlob(ctx context.Context, b blob.ID, data []byte) error {
 	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	throttled, err := az.uploadThrottler.AddReader(ioutil.NopCloser(bytes.NewReader(data)))
 	if err != nil {
 		return err
@@ -130,7 +134,6 @@ func (az *azStorage) PutBlob(ctx context.Context, b blob.ID, data []byte) error 
 
 		return translateError(err)
 	}
-	defer cancel()
 
 	// calling close before cancel() causes it to commit the upload.
 	return translateError(writer.Close())
@@ -158,12 +161,16 @@ func (az *azStorage) getObjectNameString(b blob.ID) string {
 
 // ListBlobs list azure blobs with given prefix
 func (az *azStorage) ListBlobs(ctx context.Context, prefix blob.ID, callback func(blob.Metadata) error) error {
+	// Create list iterator
 	li := az.bucket.List(&gblob.ListOptions{Prefix: az.getObjectNameString(prefix)})
+
+	// Iterate over list iterator
 	for {
 		lo, err := li.Next(ctx)
 		if err == io.EOF {
 			break
 		}
+
 		if err != nil {
 			return err
 		}
@@ -178,6 +185,7 @@ func (az *azStorage) ListBlobs(ctx context.Context, prefix blob.ID, callback fun
 			return err
 		}
 	}
+
 	return nil
 }
 
@@ -200,6 +208,9 @@ func toBandwidth(bytesPerSecond int) iothrottler.Bandwidth {
 	return iothrottler.Bandwidth(bytesPerSecond) * iothrottler.BytesPerSecond
 }
 
+// New creates new Azure Blob Storage-backed storage with specified options:
+//
+// - the 'Container' field is required and all other parameters are optional.
 func New(ctx context.Context, opt *Options) (blob.Storage, error) {
 	if opt.Container == "" {
 		return nil, errors.New("container name must be specified")
