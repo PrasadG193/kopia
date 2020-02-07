@@ -4,6 +4,7 @@ package azure
 import (
 	"bytes"
 	"context"
+	//"net/url"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -225,7 +226,18 @@ func New(ctx context.Context, opt *Options) (blob.Storage, error) {
 	// Create a Pipeline with credentials.
 	pipeline := azureblob.NewPipeline(credential, azblob.PipelineOptions{})
 
-	// Create a *blob.Bucket.
+	// Override url
+	//azURLOpener := &azureblob.URLOpener{azureblob.AccountName(opt.AccountName), pipeline, azureblob.Options{Credential: credential}}
+
+	//mymux := new(gblob.URLMux)
+	//mymux.RegisterBucket("http", azURLOpener)
+
+	//// Create a *blob.Bucket.
+	//murl, err := url.Parse("http://127.0.0.1:10000/kopiabucket")
+	//if err != nil {
+	//	return nil, err
+	//}
+	//bucket, err := mymux.OpenBucketURL(ctx, murl)
 	bucket, err := azureblob.OpenBucket(ctx, pipeline, azureblob.AccountName(opt.AccountName), opt.Container, &azureblob.Options{Credential: credential})
 	if err != nil {
 		return nil, err
