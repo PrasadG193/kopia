@@ -3,11 +3,11 @@ package s3
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha1"
+	//"crypto/sha1"
 	"fmt"
 	"log"
 	"net"
-	"os"
+	//"os"
 	"testing"
 	"time"
 
@@ -30,25 +30,26 @@ const (
 	accessKeyID     = "Q3AM3UQ867SPQQA43P2F"                     //nolint:gosec
 	secretAccessKey = "zuf+tfteSlswRu7BJ86wekitnifILbZam1KYY3TG" //nolint:gosec
 	useSSL          = true
-	kopiaUserName   = "kopiauser"
-	kopiaUserPasswd = "kopia@1234"
 
 	// the test takes a few seconds, delete stuff older than 1h to avoid accumulating cruft
 	cleanupAge = 1 * time.Hour
 )
 
-var bucketName = getBucketName()
+var (
+	kopiaUserName   = generateName("kopiauser")
+	kopiaUserPasswd = generateName("kopiapassword")
+)
 
-func getBucketName() string {
-	hn, err := os.Hostname()
+// var bucketName = "kopia-test-09a37beed6c32d0f"
+
+func generateName(name string) string {
+	b := make([]byte, 8)
+	_, err := rand.Read(b)
 	if err != nil {
-		return "kopia-test-1"
+		return fmt.Sprintf("%s-1", name)
+
 	}
-
-	h := sha1.New()
-	fmt.Fprintf(h, "%v", hn)
-
-	return fmt.Sprintf("kopia-test-%x", h.Sum(nil)[0:8])
+	return fmt.Sprintf("%s-%x", name, b)
 }
 
 func endpointReachable() bool {
@@ -62,26 +63,32 @@ func endpointReachable() bool {
 }
 
 func TestS3Storage(t *testing.T) {
-	testStorage(t, accessKeyID, secretAccessKey, "")
+	// recreate per-host bucket, which sometimes get cleaned up by play.minio.io
+	bucketName := generateName("kopia-test")
+	createBucket(t, bucketName)
+	testStorage(t, bucketName, accessKeyID, secretAccessKey, "")
+	deleteBucket(t, bucketName)
 }
 
 func TestS3StorageWithSessionToken(t *testing.T) {
+	// create test bucket
+	bucketName := generateName("kopia-test")
+	createBucket(t, bucketName)
 	// create kopia user and session token
 	createUser(t)
-	kopiaAccessKeyID, kopiaSecretKey, kopiaSessionToken := createTemporaryCreds(t)
-	testStorage(t, kopiaAccessKeyID, kopiaSecretKey, kopiaSessionToken)
+	kopiaAccessKeyID, kopiaSecretKey, kopiaSessionToken := createTemporaryCreds(t, bucketName)
+	testStorage(t, bucketName, kopiaAccessKeyID, kopiaSecretKey, kopiaSessionToken)
+	deleteBucket(t, bucketName)
 }
 
-func testStorage(t *testing.T, accessID, secretKey, sessionToken string) {
+func testStorage(t *testing.T, bucketName, accessID, secretKey, sessionToken string) {
 	if !endpointReachable() {
 		t.Skip("endpoint not reachable")
 	}
 
 	ctx := context.Background()
 
-	// recreate per-host bucket, which sometimes get cleaned up by play.minio.io
-	createBucket(t)
-	cleanupOldData(ctx, t)
+	cleanupOldData(ctx, t, bucketName)
 
 	data := make([]byte, 8)
 	rand.Read(data) //nolint:errcheck
@@ -111,7 +118,8 @@ func testStorage(t *testing.T, accessID, secretKey, sessionToken string) {
 	}
 }
 
-func createBucket(t *testing.T) {
+func createBucket(t *testing.T, bucketName string) {
+	fmt.Printf("create bucket %s\n", bucketName)
 	minioClient, err := minio.New(endpoint, accessKeyID, secretAccessKey, useSSL)
 	if err != nil {
 		t.Fatalf("can't initialize minio client: %v", err)
@@ -120,8 +128,32 @@ func createBucket(t *testing.T) {
 	_ = minioClient.MakeBucket(bucketName, "us-east-1")
 }
 
+func deleteBucket(t *testing.T, bucketName string) {
+	fmt.Printf("delete bucket %s\n", bucketName)
+	minioClient, err := minio.New(endpoint, accessKeyID, secretAccessKey, useSSL)
+	if err != nil {
+		t.Fatalf("can't initialize minio client: %v", err)
+	}
+
+	// delete all objects
+	doneCh := make(chan struct{})
+	defer close(doneCh)
+	// Recurively list all objects in 'mytestbucket'
+	for obj := range minioClient.ListObjects(bucketName, "", true, doneCh) {
+		err := minioClient.RemoveObject(bucketName, obj.Key)
+		if err != nil {
+			t.Fatalf("can't object in a bucket: %v", err)
+		}
+	}
+
+	err = minioClient.RemoveBucket(bucketName)
+	if err != nil {
+		t.Fatalf("can't delete minio bucket: %v", err)
+	}
+}
+
 func createUser(t *testing.T) {
-	// create minio admin
+	// create minio admin client
 	adminCli, err := madmin.New(endpoint, accessKeyID, secretAccessKey, useSSL)
 	if err != nil {
 		t.Fatalf("can't initialize minio admin client: %v", err)
@@ -136,9 +168,24 @@ func createUser(t *testing.T) {
 	if err = adminCli.SetPolicy("readwrite", kopiaUserName, false); err != nil {
 		t.Fatalf("failed to set user policy: %v", err)
 	}
+	fmt.Printf("create user %s\n", kopiaUserName)
 }
 
-func createTemporaryCreds(t *testing.T) (accessID, secretKey, sessionToken string) {
+func deleteUser(t *testing.T) {
+	// create minio admin client
+	adminCli, err := madmin.New(endpoint, accessKeyID, secretAccessKey, useSSL)
+	if err != nil {
+		t.Fatalf("can't initialize minio admin client: %v", err)
+	}
+
+	// delete temp kopia user
+	if err = adminCli.RemoveUser(kopiaUserName); err != nil {
+		t.Fatalf("failed to remove new minio user: %v", err)
+	}
+	fmt.Printf("deleted user\n")
+}
+
+func createTemporaryCreds(t *testing.T, bucketName string) (accessID, secretKey, sessionToken string) {
 	// Configure to use MinIO Server
 	awsConfig := &aws.Config{
 		Credentials:      credentials.NewStaticCredentials(kopiaUserName, kopiaUserPasswd, ""),
@@ -177,7 +224,7 @@ func createTemporaryCreds(t *testing.T) (accessID, secretKey, sessionToken strin
 	return *result.Credentials.AccessKeyId, *result.Credentials.SecretAccessKey, *result.Credentials.SessionToken
 }
 
-func cleanupOldData(ctx context.Context, t *testing.T) {
+func cleanupOldData(ctx context.Context, t *testing.T, bucketName string) {
 	// cleanup old data from the bucket
 	st, err := New(context.Background(), &Options{
 		AccessKeyID:     accessKeyID,
